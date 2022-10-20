@@ -1,11 +1,12 @@
-%  tl = imageSourceModel(xr,zr,zs,f,hw,Rb,Rs,varargin)
+%  tl = IMAGESOURCEMODEL(xr,zr,zs,f,hw,theta,Rb,Rs,varargin)
 % 
-%  DESCRIPTION: calculates the complex transmission loss along a horizontal
-%  transect (XR,ZR) from a point source for a single frequency F using the 
-%  Image Source method. The model accepts environmental parameters such as
-%  sound speed C, depth of water column HW, surface reflection factor RS,
-%  and bottom reflection factor RB. The transmission loss can be calculated
-%  for one or more reflection orders (higher order = higher accuracy).
+%  DESCRIPTION
+%  Calculates the complex transmission loss along a horizontal transect (XR,ZR) 
+%  from a point source for a single frequency F using the Image Source method. 
+%  The model accepts environmental parameters such as sound speed C, depth of 
+%  water column HW, surface reflection factor RS, and bottom reflection factor 
+%  RB. The transmission loss can be calculated for one or more reflection 
+%  orders (higher order = higher accuracy).
 %
 %  INPUT VARIABLES
 %  - xr: vector of receiver ranges [m]
@@ -13,11 +14,16 @@
 %  - zs: source depth [m]
 %  - f: frequency [Hz]
 %  - hw: water column depth [m]
-%  - Rb: bottom reflection factor. Must be a complex number with absolute
-%    value between 0 and 1.
-%  - Rs: surface reflection factor. Must be a complex number with absolute
-%    value between 0 and 1. If information about the surface state is
-%    lacking, a value of Rs = -1 still provides accurate results.
+%  - theta: vector of elevation angles (ref. normal). Ignored if RB and RS
+%    are 1-element vectors [deg]
+%  - Rb: vector of bottom reflection factors at THETA. Each value must be a 
+%    complex number with absolute value between 0 and 1. RB can be a 1-element
+%    vector if the reflection factor is constant with THETA.
+%  - Rs: vector of surface reflection factors at THETA. Each value must be a 
+%    complex number with absolute value between 0 and 1. RS can be a 1-element
+%    vector if the reflection factor is constant with THETA.If information 
+%    about the surface state is lacking, a value of Rs = -1 still provides 
+%    accurate results.
 %
 %  VARIABLE INPUT ARGUMENTS
 %  Specified in ('string',value) pairs within the function call. Type any
@@ -38,7 +44,7 @@
 %  - None
 %
 %  FUNCTION CALLS
-%  1) tl = imageSourceModel(f,hw,xr,zr,zs,Rb,Rs)
+%  1) tl = imageSourceModel(f,hw,xr,zr,zs,theta,Rb,Rs)
 %      ¬ 'order'-> ordref = 100, 'soundspeed' -> c = 1500 m/s
 %  2) tl = imageSourceModel(...,STR,VAL)
 %      ¬ ...,'order',ordref
@@ -57,8 +63,15 @@
 %  - Robinson et al. (2011). "Measurement of underwater noise arising from
 %    marine aggregate dredging operations", Appendix C, p. 103-104.
 %
-%  See also lloydMirror.m
+%  See also lloydMirror.m, surfaceReflection.m
 
+%  VERSION 2.0 from 14 Mar 2021
+%  - Added input argument THETA and updated RB and RS into vectors to
+%    accept angle-dependent reflection factors. RB and RS should always
+%    input as angle-dependent for more realistic results, since sound
+%    arriving at the seabed at angles close to the normal experience large
+%    attenuations.
+%
 %  VERSION 1.1 from 13 Mar 2021
 %  - Simple update to accept a vector of receiver depths. Still a single 
 %    receiver depth can be specified (back-compatibility with ver 1.1)
@@ -68,15 +81,15 @@
 %  email: gjarranz@gmail.com
 %  27 Feb 2019
 
-function tl = imageSourceModel(xr,zr,zs,f,hw,Rb,Rs,varargin)
+function tl = imageSourceModel(xr,zr,zs,f,hw,theta,Rb,Rs,varargin)
 
-if rem(nargin - 7,2) 
+if rem(nargin - 8,2) 
     error('Name/value pair arguments must come in pairs')
 else
     ordref = 100; % bottom reflection order (no. boundary reflections = 4 * ordref + 1)
     c = 1500; % speed of sound in water [m/s]
     m = 1;
-    while m <= nargin - 7
+    while m <= nargin - 8
        if ~ischar(varargin{m}), error('Expected string parameter'); end
        switch varargin{m}               
            case 'order'
@@ -93,6 +106,7 @@ end
 M = length(xr); % number of points in range vector;
 xr = xr(:); % convert range vector into column
 zr = zr(:); % convert receiver depth vector into column 
+theta = theta(:)'; % convert vector of elevation angles into row
 k = 2*pi*f/c; % wave number [rad/m]
 nbot = max(ordref); % number of reflection groups
 n = 1:nbot; % vector of number of reflection groups
@@ -118,15 +132,47 @@ for q = 1:Q
     r2n = sqrt(xb.^2 + (2*n*hw + zr - zs).^2);
     r3n = sqrt(xb.^2 + (2*n*hw - zr + zs).^2);
     r4n = sqrt(xb.^2 + (2*n*hw + zr + zs).^2);
-
+    
+    % Calculate Seabed Incidence Angles
+    theta1n = atan(xb./(2*n*hw - zr - zs)) * 180/pi;
+    theta2n = atan(xb./(2*n*hw + zr - zs)) * 180/pi;
+    theta3n = atan(xb./(2*n*hw - zr + zs)) * 180/pi;
+    theta4n = atan(xb./(2*n*hw + zr + zs)) * 180/pi;
+    
+    % Calculate Bottom Reflection Coefficients
+    if numel(Rb) == 1
+        Rb1n = Rb;
+        Rb2n = Rb;
+        Rb3n = Rb;
+        Rb4n = Rb;
+    else
+        Rb1n = interp1(theta,Rb,theta1n);
+        Rb2n = interp1(theta,Rb,theta2n);
+        Rb3n = interp1(theta,Rb,theta3n);
+        Rb4n = interp1(theta,Rb,theta4n);
+    end
+    
+    % Calculate Surface Reflection Coefficients
+    if numel(Rs) == 1
+        Rs1n = Rs;
+        Rs2n = Rs;
+        Rs3n = Rs;
+        Rs4n = Rs;
+    else
+        Rs1n = interp1(theta,Rs,theta1n);
+        Rs2n = interp1(theta,Rs,theta2n);
+        Rs3n = interp1(theta,Rs,theta3n);
+        Rs4n = interp1(theta,Rs,theta4n);
+    end
+    
     % Calculate Sound Pressures
     pd = exp(1j*k*r1)./r1; % pressure from direct sound [Pa]
     pg = Rs * exp(1j*k*r2)./r2; % pressure from ghost reflection [Pa]#
     if nbot % if max reflection order is different than 0
-        pr1 = Rs.^(n-1) .* exp(1j*k*r1n)./r1n .* Rb.^n; % pressure from reflections of order 2*n - 1 (bottom first)
-        pr2 = Rs.^n .* exp(1j*k*r2n)./r2n .* Rb.^n; % pressure from reflections of order 2*n (surface first)
-        pr3 = Rs.^n .* exp(1j*k*r3n)./r3n .* Rb.^n; % pressure from reflections of order 2*n (bottom first)
-        pr4 = Rs.^(n+1) .* exp(1j*k*r4n)./r4n .* Rb.^n; % pressure from reflections of order 2*n + 1 (surface first)
+        pr1 = Rs1n.^(n-1) .* exp(1j*k*r1n)./r1n .* Rb1n.^n; % pressure from reflections of order 2*n - 1 (bottom first)
+        pr2 = Rs2n.^n .* exp(1j*k*r2n)./r2n .* Rb2n.^n; % pressure from reflections of order 2*n (surface first)
+        pr3 = Rs3n.^n .* exp(1j*k*r3n)./r3n .* Rb3n.^n; % pressure from reflections of order 2*n (bottom first)
+        pr4 = Rs4n.^(n+1) .* exp(1j*k*r4n)./r4n .* Rb4n.^n; % pressure from reflections of order 2*n + 1 (surface first)
     else
         pr1 = [];
         pr2 = [];
